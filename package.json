@@ -1,0 +1,26 @@
+{
+  "name": "vk-conversation-statistics",
+  "version": "1.0.0",
+  "description": "Пользовательский скрипт для анализа сообщений в диалоге",
+  "main": "build.js",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FlyInk13/vk-conversation-statistics.git"
+  },
+  "devDependencies": {
+    "babel-standalone": "^6.18.2"
+  },
+  "dependencies": {
+    "react": "^16.12.0",
+    "react-dom": "^16.12.0"
+  },
+  "author": "Flyink13",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/FlyInk13/vk-conversation-statistics/issues"
+  },
+  "homepage": "https://github.com/FlyInk13/vk-conversation-statistics"
+}
