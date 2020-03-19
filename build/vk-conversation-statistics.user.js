@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Анализ переписки
 // @namespace    http://vk.com/
-// @version      1.0.0
+// @version      1.1.0
 // @description  Пользовательский скрипт для анализа сообщений в диалоге
 // @author       FlyInk13
 // @require      https://unpkg.com/react@16/umd/react.development.js
