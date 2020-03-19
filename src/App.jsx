@@ -17,6 +17,8 @@ class App extends React.Component {
       limitDate: 0,
       firstDate: 0,
 
+      limits: {},
+
       counters: {
         users: {},
 
@@ -187,26 +189,35 @@ class App extends React.Component {
    */
   static getHistoryWithExecute(peer_id, offset) {
     return App.callMethod("execute", {
-      code: "\
-                var offset = parseInt(Args.offset);\n\
-                var req = {\n\
-                    \"peer_id\": parseInt(Args.peer_id),\n\
-                    \"count\":200,\"rev\":1,\"offset\":offset\n\
-                };\n\
-                var ret = {};\n\
-                ret.historyBatches = [];\n\
-                var i = 0;\n\
-                var lastResponse;\n\
-                while(i < 25){\n\
-                    i = i + 1;\n\
-                    lastResponse = API.messages.getHistory(req);\n\
-                    if(lastResponse.count < req.offset) return ret;\n\
-                    ret.historyBatches.push(lastResponse.items);\n\
-                    req.offset = req.offset + 200;\n\
-                    ret.nextOffset = req.offset;\n\
-                    ret.totalCount = lastResponse.count;\n\
-                }\n\
-                return ret;",
+      code: `// VKScript
+        var i = 0;
+        var lastResponse;
+        var offset = parseInt(Args.offset);
+        
+        var req = {
+            "peer_id": parseInt(Args.peer_id),
+            "count": 200,
+            "rev": 1,
+            "offset": offset
+        };
+        var res = {
+          historyBatches: []
+        };
+        
+        while (i < 25) {
+            i = i + 1;
+            lastResponse = API.messages.getHistory(req);
+            
+            if (lastResponse.count < req.offset) {
+              return res;
+            }
+            
+            res.historyBatches.push(lastResponse.items);
+            req.offset = req.offset + 200;
+            res.nextOffset = req.offset;
+            res.totalCount = lastResponse.count;
+        }
+        return res;`,
       peer_id: peer_id,
       offset: offset,
       v: '5.103',
@@ -220,16 +231,95 @@ class App extends React.Component {
   }
 
   /**
+   * Ищет offset для истории с определенной даты
+   * Ищет приблезительно, далее работает фильтрация по дате
+   * В случае ошибки выдает 0 - и скрипт будет загружать всю историю
+   *
+   * @param {number} peer_id
+   * @param {number} date
+   * @return {Promise<number>}
+   */
+  static findHistoryOffset(peer_id, date) {
+    if (!date) {
+      return Promise.resolve(0);
+    }
+
+    return App.callMethod("execute", {
+      date: date,
+      peer_id: peer_id,
+      code: `// VKScript
+        var iterations = 23;
+        
+        var search_date = parseInt(Args.date);
+        var req = {
+          rev: 1,
+          peer_id: Args.peer_id,
+          offset: 0,
+          count: 1
+        };
+        
+        var history = API.messages.getHistory(req);
+        var count = history.count;
+        var total = history.count;
+        var cur_date = history.items[0].date;
+        
+        if (cur_date > search_date) {
+          return {
+            total: total,
+            count: count,
+            cur_date: cur_date,
+            search_date: search_date,
+            diff: search_date - cur_date,
+            offset: req.offset
+          };
+        }
+        
+        while (iterations > 0 && count > 200) {
+          iterations = iterations - 1;
+          count = parseInt(count / 2);
+          req.offset = req.offset + count;
+          cur_date = API.messages.getHistory(req).items[0].date;
+          if (cur_date > search_date) {
+            count = count * 2;
+            req.offset = req.offset - count;
+          }
+        }
+        
+        cur_date = API.messages.getHistory(req).items[0].date;
+        
+        return {
+          total: total,
+          count: count,
+          cur_date: cur_date,
+          search_date: search_date,
+          diff: search_date - cur_date,
+          offset: req.offset
+        };
+      `
+    }).then(({ response, response: { diff, offset } }) => {
+      if (diff < 0) {
+        throw response;
+      }
+
+      return offset;
+    }).catch((error) => {
+      console.error(error);
+      return 0;
+    });
+  }
+
+  /**
    * Быстрая выгрузка переписки через execute
    * @param {number} peer_id
+   * @param {number} date
    * @param {function} onStep
    * @return {Promise<{batchItems: *[], nextOffset, totalCount}>}
    */
-  async getAllHistory(peer_id, onStep) {
-    let offset = 0;
-    let count = 1;
+  async getAllHistory(peer_id, date, onStep) {
+    let offset = await App.findHistoryOffset(peer_id, date);
+    let count = 0;
 
-    while (offset < count && !this.closed) {
+    while ((!count || offset < count) && !this.closed) {
       const { batchItems, nextOffset, totalCount } = await App.getHistoryWithExecute(peer_id, offset);
       await onStep({ batchItems, nextOffset, totalCount });
 
@@ -354,6 +444,7 @@ class App extends React.Component {
    */
   async onStep({ batchItems, nextOffset, totalCount }) {
     const { counters, limitDate } = this.state;
+    const timeZone = new Date().getTimezoneOffset() * 60;
     let firstDate = this.state.firstDate;
     let lastMessage = {};
 
@@ -373,7 +464,8 @@ class App extends React.Component {
       // others
       counters.users[from_id] = (counters.users[from_id] || 0) + 1;
 
-      message.day = new Date(message.date * 1000).toISOString().split('T')[0];
+      const messageDate = (message.date + timeZone) * 1000;
+      message.day = new Date(messageDate).toISOString().split('T')[0];
 
       counters.days[message.day] = counters.days[message.day] || { count: 0, words: {} };
       const dailyCounters = counters.days[message.day];
@@ -417,15 +509,15 @@ class App extends React.Component {
       });
     });
 
-    const owner_ids = Object.keys(counters.users);
-    await this.loadOwnersIfNeed(owner_ids);
-
-    return this.setStatePromise({
+    await this.setStatePromise({
       progress: `${nextOffset} / ${totalCount} (${~~(nextOffset / totalCount * 100)}%)`,
       counters,
       lastMessage,
       firstDate
     });
+
+    const owner_ids = Object.keys(counters.users);
+    await this.loadOwnersIfNeed(owner_ids);
   }
 
   /**
@@ -437,18 +529,19 @@ class App extends React.Component {
 
     if (this.state.date) {
       const date = new Date(this.state.date);
-      limitDate = date / 1000;
+      const timeZone = date.getTimezoneOffset() * 60;
+      limitDate = date / 1000 + timeZone;
     }
 
     this.setStatePromise({
       progress: 'Загрузка...',
       limitDate
     }).then(() => {
-      return this.getAllHistory(peer_id, (data) => {
+      return this.getAllHistory(peer_id, limitDate, (data) => {
         return this.onStep(data);
       });
     }).then(() => {
-      this.setState({
+      return this.setStatePromise({
         progress: 'Готово',
       });
     }).catch((error) => {
@@ -485,7 +578,7 @@ class App extends React.Component {
    * Рендер стартового экрана
    * @return {*}
    */
-  renderDateSelect() {
+  renderSettings() {
     return (
       <div className="im_stat_window">
         <div style={{ marginBottom: '6px' }}>
@@ -541,34 +634,63 @@ class App extends React.Component {
   /**
    * Рендер таблицы с рейтингом
    * @param {object} list
-   * @param {string} type
+   * @param {string} title
    * @param {function} render
    * @param {number} count
+   * @param {string} limit_id
    * @return {string|*}
    */
-  renderTopList(list, type, render, count) {
-    const topList = Object.entries(list)
-      .sort(([, count_a], [, count_b]) => {
-        if (typeof count_a === 'object') {
-          return count_b.count - count_a.count;
-        } else {
-          return count_b - count_a;
-        }
-      })
-      .splice(0, count || 25);
+  renderTopList(list, title, render, count, limit_id) {
+    const topList = Object.entries(list).sort(([, count_a], [, count_b]) => {
+      if (typeof count_a === 'object') {
+        return count_b.count - count_a.count;
+      } else {
+        return count_b - count_a;
+      }
+    });
 
-    if (!topList.length) {
+    return this.renderList(topList, title, render, count, limit_id);
+  }
+
+  /**
+   * Рендер таблицы с рейтингом
+   * @param {object} list
+   * @param {string} title
+   * @param {function} render
+   * @param {number} count
+   * @param {string} limit_id
+   * @return {string|*}
+   */
+  renderList(list, title, render, count, limit_id) {
+    const limit = this.state.limits[limit_id] || count;
+
+    if (!list || !list.length) {
       return '';
     }
 
     return (
       <div style={{ marginTop: '6px' }}>
         <div style={{ padding: '6px', textAlign: 'center' }}>
-          Топ <b>{topList.length} {type}</b>:
+          <b>{title}</b> {list.length}:
         </div>
         <div>
-          {topList.map(render)}
+          {list.splice(0, limit).map(render)}
         </div>
+        {list.length < limit ? '' : (
+          <div style={{ textAlign: 'center', marginTop: '6px' }}>
+            <button
+              className="flat_button secondary"
+              onClick={() => {
+                const { limits } = this.state;
+                limits[limit_id] = limits[limit_id] || count;
+                limits[limit_id] += count;
+                this.setState({ limits });
+              }}
+            >
+              Показать еще
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -583,14 +705,14 @@ class App extends React.Component {
     return (
       <div>
         {this.renderHeader()}<br/>
-        {this.renderTopList(counters.users, 'пользователей', ([user_id, count]) => {
+        {this.renderTopList(counters.users, 'Топ пользователей:', ([user_id, count], index) => {
           return (
             <div>
-              {this.renderLink(user_id)} - {count}
+              {index + 1}) {this.renderLink(user_id)} - {count}
             </div>
           );
-        })}
-        {this.renderTopList(counters.days, 'дней', ([item_id, { count, words }]) => {
+        }, 25, 'users')}
+        {this.renderTopList(counters.days, 'Топ дней:', ([item_id, { count, words }], index) => {
           const dailyWord = Object.entries(words)
             .sort(([, count_a], [, count_b]) => count_b - count_a)
             .splice(0, 5)
@@ -599,13 +721,13 @@ class App extends React.Component {
 
           return (
             <div>
-              {item_id} - {count} - {dailyWord}
+              {index + 1}) {item_id} - {count} - {dailyWord}
             </div>
           );
-        }, 30)}
-        {this.renderTopList(counters.stickers, 'стикеров', ([item_id, count]) => {
+        }, 25, 'days')}
+        {this.renderTopList(counters.stickers, 'Топ стикеров:', ([item_id, count], index) => {
           return (
-            <div style={{ display: 'inline-block', position: 'relative', width: 68 }}>
+            <div title={index + 1} style={{ display: 'inline-block', position: 'relative', width: 68 }}>
               <div
                 style={{
                   position: 'absolute',
@@ -615,17 +737,17 @@ class App extends React.Component {
                   padding: '3px'
                 }}
               >{count}</div>
-              <img src={`https://vk.com/sticker/1-${item_id}-256`} width={68}/>
+              <img src={`https://vk.com/sticker/1-${item_id}-256`} width={68} alt={item_id + ' sticker'}/>
             </div>
           );
-        }, 14)}
-        {this.renderTopList(counters.words, 'слов', ([item_id, count]) => {
+        }, 14, 'stickers')}
+        {this.renderTopList(counters.words, 'Топ слов:', ([item_id, count], index) => {
           return (
             <div>
-              {item_id} - {count}
+              {index + 1}) {item_id} - {count}
             </div>
           );
-        }, 200)}
+        }, 200, 'words')}
       </div>
     );
   }
@@ -639,7 +761,7 @@ class App extends React.Component {
 
     return (
       <div>
-        {progress ? this.renderStat() : this.renderDateSelect()}
+        {progress ? this.renderStat() : this.renderSettings()}
       </div>
     );
   }
