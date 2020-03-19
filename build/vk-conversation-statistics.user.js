@@ -55,6 +55,8 @@ var App = function (_React$Component) {
       limitDate: 0,
       firstDate: 0,
 
+      limits: {},
+
       counters: {
         users: {},
 
@@ -137,14 +139,15 @@ var App = function (_React$Component) {
     /**
      * Быстрая выгрузка переписки через execute
      * @param {number} peer_id
+     * @param {number} date
      * @param {function} onStep
      * @return {Promise<{batchItems: *[], nextOffset, totalCount}>}
      */
-    value: async function getAllHistory(peer_id, onStep) {
-      var offset = 0;
-      var count = 1;
+    value: async function getAllHistory(peer_id, date, onStep) {
+      var offset = await App.findHistoryOffset(peer_id, date);
+      var count = 0;
 
-      while (offset < count && !this.closed) {
+      while ((!count || offset < count) && !this.closed) {
         var _ref = await App.getHistoryWithExecute(peer_id, offset),
             batchItems = _ref.batchItems,
             nextOffset = _ref.nextOffset,
@@ -216,6 +219,7 @@ var App = function (_React$Component) {
           counters = _state.counters,
           limitDate = _state.limitDate;
 
+      var timeZone = new Date().getTimezoneOffset() * 60;
       var firstDate = this.state.firstDate;
       var lastMessage = {};
 
@@ -235,7 +239,8 @@ var App = function (_React$Component) {
         // others
         counters.users[from_id] = (counters.users[from_id] || 0) + 1;
 
-        message.day = new Date(message.date * 1000).toISOString().split('T')[0];
+        var messageDate = (message.date + timeZone) * 1000;
+        message.day = new Date(messageDate).toISOString().split('T')[0];
 
         counters.days[message.day] = counters.days[message.day] || { count: 0, words: {} };
         var dailyCounters = counters.days[message.day];
@@ -271,15 +276,15 @@ var App = function (_React$Component) {
         });
       });
 
-      var owner_ids = Object.keys(counters.users);
-      await this.loadOwnersIfNeed(owner_ids);
-
-      return this.setStatePromise({
+      await this.setStatePromise({
         progress: nextOffset + ' / ' + totalCount + ' (' + ~~(nextOffset / totalCount * 100) + '%)',
         counters: counters,
         lastMessage: lastMessage,
         firstDate: firstDate
       });
+
+      var owner_ids = Object.keys(counters.users);
+      await this.loadOwnersIfNeed(owner_ids);
     }
 
     /**
@@ -297,18 +302,19 @@ var App = function (_React$Component) {
 
       if (this.state.date) {
         var date = new Date(this.state.date);
-        limitDate = date / 1000;
+        var timeZone = date.getTimezoneOffset() * 60;
+        limitDate = date / 1000 + timeZone;
       }
 
       this.setStatePromise({
         progress: 'Загрузка...',
         limitDate: limitDate
       }).then(function () {
-        return _this3.getAllHistory(peer_id, function (data) {
+        return _this3.getAllHistory(peer_id, limitDate, function (data) {
           return _this3.onStep(data);
         });
       }).then(function () {
-        _this3.setState({
+        return _this3.setStatePromise({
           progress: 'Готово'
         });
       }).catch(function (error) {
@@ -352,8 +358,8 @@ var App = function (_React$Component) {
      */
 
   }, {
-    key: 'renderDateSelect',
-    value: function renderDateSelect() {
+    key: 'renderSettings',
+    value: function renderSettings() {
       var _this4 = this;
 
       return React.createElement(
@@ -457,15 +463,16 @@ var App = function (_React$Component) {
     /**
      * Рендер таблицы с рейтингом
      * @param {object} list
-     * @param {string} type
+     * @param {string} title
      * @param {function} render
      * @param {number} count
+     * @param {string} limit_id
      * @return {string|*}
      */
 
   }, {
     key: 'renderTopList',
-    value: function renderTopList(list, type, render, count) {
+    value: function renderTopList(list, title, render, count, limit_id) {
       var topList = Object.entries(list).sort(function (_ref3, _ref4) {
         var _ref6 = _slicedToArray(_ref3, 2),
             count_a = _ref6[1];
@@ -478,9 +485,29 @@ var App = function (_React$Component) {
         } else {
           return count_b - count_a;
         }
-      }).splice(0, count || 25);
+      });
 
-      if (!topList.length) {
+      return this.renderList(topList, title, render, count, limit_id);
+    }
+
+    /**
+     * Рендер таблицы с рейтингом
+     * @param {object} list
+     * @param {string} title
+     * @param {function} render
+     * @param {number} count
+     * @param {string} limit_id
+     * @return {string|*}
+     */
+
+  }, {
+    key: 'renderList',
+    value: function renderList(list, title, render, count, limit_id) {
+      var _this5 = this;
+
+      var limit = this.state.limits[limit_id] || count;
+
+      if (!list || !list.length) {
         return '';
       }
 
@@ -490,20 +517,37 @@ var App = function (_React$Component) {
         React.createElement(
           'div',
           { style: { padding: '6px', textAlign: 'center' } },
-          '\u0422\u043E\u043F ',
           React.createElement(
             'b',
             null,
-            topList.length,
-            ' ',
-            type
+            title
           ),
+          ' ',
+          list.length,
           ':'
         ),
         React.createElement(
           'div',
           null,
-          topList.map(render)
+          list.splice(0, limit).map(render)
+        ),
+        list.length < limit ? '' : React.createElement(
+          'div',
+          { style: { textAlign: 'center', marginTop: '6px' } },
+          React.createElement(
+            'button',
+            {
+              className: 'flat_button secondary',
+              onClick: function onClick() {
+                var limits = _this5.state.limits;
+
+                limits[limit_id] = limits[limit_id] || count;
+                limits[limit_id] += count;
+                _this5.setState({ limits: limits });
+              }
+            },
+            '\u041F\u043E\u043A\u0430\u0437\u0430\u0442\u044C \u0435\u0449\u0435'
+          )
         )
       );
     }
@@ -516,7 +560,7 @@ var App = function (_React$Component) {
   }, {
     key: 'renderStat',
     value: function renderStat() {
-      var _this5 = this;
+      var _this6 = this;
 
       var counters = this.state.counters;
 
@@ -526,7 +570,7 @@ var App = function (_React$Component) {
         null,
         this.renderHeader(),
         React.createElement('br', null),
-        this.renderTopList(counters.users, 'пользователей', function (_ref7) {
+        this.renderTopList(counters.users, 'Топ пользователей:', function (_ref7, index) {
           var _ref8 = _slicedToArray(_ref7, 2),
               user_id = _ref8[0],
               count = _ref8[1];
@@ -534,12 +578,14 @@ var App = function (_React$Component) {
           return React.createElement(
             'div',
             null,
-            _this5.renderLink(user_id),
+            index + 1,
+            ') ',
+            _this6.renderLink(user_id),
             ' - ',
             count
           );
-        }),
-        this.renderTopList(counters.days, 'дней', function (_ref9) {
+        }, 25, 'users'),
+        this.renderTopList(counters.days, 'Топ дней:', function (_ref9, index) {
           var _ref10 = _slicedToArray(_ref9, 2),
               item_id = _ref10[0],
               _ref10$ = _ref10[1],
@@ -564,21 +610,23 @@ var App = function (_React$Component) {
           return React.createElement(
             'div',
             null,
+            index + 1,
+            ') ',
             item_id,
             ' - ',
             count,
             ' - ',
             dailyWord
           );
-        }, 30),
-        this.renderTopList(counters.stickers, 'стикеров', function (_ref17) {
+        }, 25, 'days'),
+        this.renderTopList(counters.stickers, 'Топ стикеров:', function (_ref17, index) {
           var _ref18 = _slicedToArray(_ref17, 2),
               item_id = _ref18[0],
               count = _ref18[1];
 
           return React.createElement(
             'div',
-            { style: { display: 'inline-block', position: 'relative', width: 68 } },
+            { title: index + 1, style: { display: 'inline-block', position: 'relative', width: 68 } },
             React.createElement(
               'div',
               {
@@ -592,10 +640,10 @@ var App = function (_React$Component) {
               },
               count
             ),
-            React.createElement('img', { src: 'https://vk.com/sticker/1-' + item_id + '-256', width: 68 })
+            React.createElement('img', { src: 'https://vk.com/sticker/1-' + item_id + '-256', width: 68, alt: item_id + ' sticker' })
           );
-        }, 14),
-        this.renderTopList(counters.words, 'слов', function (_ref19) {
+        }, 14, 'stickers'),
+        this.renderTopList(counters.words, 'Топ слов:', function (_ref19, index) {
           var _ref20 = _slicedToArray(_ref19, 2),
               item_id = _ref20[0],
               count = _ref20[1];
@@ -603,11 +651,13 @@ var App = function (_React$Component) {
           return React.createElement(
             'div',
             null,
+            index + 1,
+            ') ',
             item_id,
             ' - ',
             count
           );
-        }, 200)
+        }, 200, 'words')
       );
     }
 
@@ -625,7 +675,7 @@ var App = function (_React$Component) {
       return React.createElement(
         'div',
         null,
-        progress ? this.renderStat() : this.renderDateSelect()
+        progress ? this.renderStat() : this.renderSettings()
       );
     }
 
@@ -727,26 +777,7 @@ var App = function (_React$Component) {
     key: 'getHistoryWithExecute',
     value: function getHistoryWithExecute(peer_id, offset) {
       return App.callMethod("execute", {
-        code: "\
-                var offset = parseInt(Args.offset);\n\
-                var req = {\n\
-                    \"peer_id\": parseInt(Args.peer_id),\n\
-                    \"count\":200,\"rev\":1,\"offset\":offset\n\
-                };\n\
-                var ret = {};\n\
-                ret.historyBatches = [];\n\
-                var i = 0;\n\
-                var lastResponse;\n\
-                while(i < 25){\n\
-                    i = i + 1;\n\
-                    lastResponse = API.messages.getHistory(req);\n\
-                    if(lastResponse.count < req.offset) return ret;\n\
-                    ret.historyBatches.push(lastResponse.items);\n\
-                    req.offset = req.offset + 200;\n\
-                    ret.nextOffset = req.offset;\n\
-                    ret.totalCount = lastResponse.count;\n\
-                }\n\
-                return ret;",
+        code: '// VKScript\n        var i = 0;\n        var lastResponse;\n        var offset = parseInt(Args.offset);\n        \n        var req = {\n            "peer_id": parseInt(Args.peer_id),\n            "count": 200,\n            "rev": 1,\n            "offset": offset\n        };\n        var res = {\n          historyBatches: []\n        };\n        \n        while (i < 25) {\n            i = i + 1;\n            lastResponse = API.messages.getHistory(req);\n            \n            if (lastResponse.count < req.offset) {\n              return res;\n            }\n            \n            res.historyBatches.push(lastResponse.items);\n            req.offset = req.offset + 200;\n            res.nextOffset = req.offset;\n            res.totalCount = lastResponse.count;\n        }\n        return res;',
         peer_id: peer_id,
         offset: offset,
         v: '5.103'
@@ -763,6 +794,44 @@ var App = function (_React$Component) {
           nextOffset: nextOffset,
           totalCount: totalCount
         };
+      });
+    }
+
+    /**
+     * Ищет offset для истории с определенной даты
+     * Ищет приблезительно, далее работает фильтрация по дате
+     * В случае ошибки выдает 0 - и скрипт будет загружать всю историю
+     *
+     * @param {number} peer_id
+     * @param {number} date
+     * @return {Promise<number>}
+     */
+
+  }, {
+    key: 'findHistoryOffset',
+    value: function findHistoryOffset(peer_id, date) {
+      if (!date) {
+        return Promise.resolve(0);
+      }
+
+      return App.callMethod("execute", {
+        date: date,
+        peer_id: peer_id,
+        code: '// VKScript\n        var iterations = 23;\n        \n        var search_date = parseInt(Args.date);\n        var req = {\n          rev: 1,\n          peer_id: Args.peer_id,\n          offset: 0,\n          count: 1\n        };\n        \n        var history = API.messages.getHistory(req);\n        var count = history.count;\n        var total = history.count;\n        var cur_date = history.items[0].date;\n        \n        if (cur_date > search_date) {\n          return {\n            total: total,\n            count: count,\n            cur_date: cur_date,\n            search_date: search_date,\n            diff: search_date - cur_date,\n            offset: req.offset\n          };\n        }\n        \n        while (iterations > 0 && count > 200) {\n          iterations = iterations - 1;\n          count = parseInt(count / 2);\n          req.offset = req.offset + count;\n          cur_date = API.messages.getHistory(req).items[0].date;\n          if (cur_date > search_date) {\n            count = count * 2;\n            req.offset = req.offset - count;\n          }\n        }\n        \n        cur_date = API.messages.getHistory(req).items[0].date;\n        \n        return {\n          total: total,\n          count: count,\n          cur_date: cur_date,\n          search_date: search_date,\n          diff: search_date - cur_date,\n          offset: req.offset\n        };\n      '
+      }).then(function (_ref26) {
+        var response = _ref26.response,
+            _ref26$response = _ref26.response,
+            diff = _ref26$response.diff,
+            offset = _ref26$response.offset;
+
+        if (diff < 0) {
+          throw response;
+        }
+
+        return offset;
+      }).catch(function (error) {
+        console.error(error);
+        return 0;
       });
     }
   }, {
