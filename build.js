@@ -14,6 +14,9 @@ const { code } = Babel.transform(appCodeX, {
 
 const codeWithHeader = `${headerCode}
 
-${code}`;
+(function flyInkVkConversationStatistics() {
+${code}
+})();
+`;
 
 fs.writeFileSync(`./build/${package.name}.user.js`, codeWithHeader);

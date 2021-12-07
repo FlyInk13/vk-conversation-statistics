@@ -54,7 +54,9 @@ class App extends React.Component {
    * @return {Promise}
    */
   static callMethod(method, data) {
-    return window.API(method, data);
+    return vkApi.api(method, data).then((response) => {
+      return { response };
+    });
   }
 
   /**

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Анализ переписки
 // @namespace    http://vk.com/
-// @version      1.1.0
+// @version      1.1.1
 // @description  Пользовательский скрипт для анализа сообщений в диалоге
 // @author       FlyInk13
 // @require      https://unpkg.com/react@16/umd/react.development.js
@@ -14,6 +14,7 @@
 // ==/UserScript==
 
 
+(function flyInkVkConversationStatistics() {
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -684,7 +685,9 @@ var App = function (_React$Component) {
   }], [{
     key: 'callMethod',
     value: function callMethod(method, data) {
-      return window.API(method, data);
+      return vkApi.api(method, data).then(function (response) {
+        return { response: response };
+      });
     }
 
     /**
@@ -923,3 +926,4 @@ var App = function (_React$Component) {
 }(React.Component);
 
 App.initMenuSearch();
+})();
