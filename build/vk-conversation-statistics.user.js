@@ -432,6 +432,8 @@ class App extends React.Component {
     const history = currentTarget ? currentTarget.closest('.im-page-history-w') : 0;
     const message = history ? history.querySelector('[data-msgid]') : 0;
     const peer_id = message ? message.dataset.peer : 0;
+
+    return peer_id;
   }
 
   /**
