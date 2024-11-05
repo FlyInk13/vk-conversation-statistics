@@ -385,10 +385,44 @@ class App extends React.Component {
     })
   }
 
+  static searchReforgedMenu() {
+    const observer = new MutationObserver((mutationList) => {
+      const reforgedPeer = location.href.match(/^https:\/\/vk.com\/im\/convo\/(\d+)/)
+      if (!reforgedPeer) return;
+      for (const mutation of mutationList) {
+        if (mutation.type !== "childList") continue;
+        if (mutation.target.id === "reforged-modal-root") continue;
+        if (!mutation.addedNodes.length) continue;
+        const getAction = el => el && el.querySelector ? el.querySelector('.ActionsMenuAction:has(.vkuiIcon--attach_20)') : null;
+        const actionButton = getAction(mutation.addedNodes[0]);
+        if (!actionButton) continue;
+        const newButton = actionButton.cloneNode(true);
+
+        const newBTitle = newButton.querySelector('.ActionsMenuAction__title');
+        newBTitle.textContent = 'Анализ переписки';
+
+        const newBIcon = newButton.querySelector('svg');
+        newBIcon.innerHTML = newBIcon.innerHTML.replaceAll('attach_20', 'statistics_outline_20');
+        newBIcon.innerHTML = `<path fill="currentColor" fill-rule="evenodd" d="M17 3.75a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L10.5 8.44 9.03 6.97a.75.75 0 0 0-1.06 0l-4.75 4.75a.75.75 0 1 0 1.06 1.06L8.5 8.56l1.47 1.47a.75.75 0 0 0 1.06 0l4.47-4.47v1.69a.75.75 0 0 0 1.5 0zM2 16.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75" clip-rule="evenodd"></path>`
+        
+        newButton.onclick = App.onMenuClick;
+
+        actionButton.after(newButton);
+      }
+    });
+    
+    // Start observing the target node for configured mutations
+    observer.observe(document.body, { 
+        childList: true,
+        subtree: true
+    });
+  }
+
   /**
    * Ищет меню по интервалу
    */
   static initMenuSearch() {
+    App.searchReforgedMenu();
     setInterval(() => {
       if (!/^\/im/.test(window.location.pathname)) {
         return;
@@ -398,17 +432,27 @@ class App extends React.Component {
     }, 1000);
   }
 
+  static getPeerId(event) {
+    const reforgedPeer = location.href.match(/^https:\/\/vk.com\/im\/convo\/(\d+)/)
+    if (reforgedPeer) {
+      return Number(reforgedPeer[1]);
+    }
+
+    const currentTarget = event.currentTarget;
+    const history = currentTarget ? currentTarget.closest('.im-page-history-w') : 0;
+    const message = history ? history.querySelector('[data-msgid]') : 0;
+    const peer_id = message ? message.dataset.peer : 0;
+
+    return peer_id;
+  }
+
   /**
    * Запускает приложение по клику на пункт меню
    * @param event
    * @return {boolean}
    */
   static onMenuClick(event) {
-    const currentTarget = event.currentTarget;
-    const history = currentTarget ? currentTarget.closest('.im-page-history-w') : 0;
-    const message = history ? history.querySelector('[data-msgid]') : 0;
-    const peer_id = message ? message.dataset.peer : 0;
-
+    const peer_id = App.getPeerId(event);
     if (!peer_id) {
       alert('Invalid peer_id');
       return false;

@@ -9,7 +9,7 @@ const appCodeX = appCodeRaw.replace(/(import.+?;)/mg, '// $1');
 const headerCode = headerCodeRaw.replace(/%version%/, package.version);
 
 const { code } = Babel.transform(appCodeX, {
-  presets: [ 'es2015', 'es2016', 'react' ]
+  presets: [ 'es2016', 'react' ]
 });
 
 const codeWithHeader = `${headerCode}
